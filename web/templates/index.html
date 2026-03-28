@@ -545,7 +545,8 @@
             return results.map(function(r) {
                 var datePart = r.modified ? r.modified.split(' ')[0] : '';
                 var html = '<div class="result">'
-                    + '<div class="result-title"><a href="/pdf/' + r.id + '" target="_blank">' + escapeHtml(r.filename) + '</a></div>'
+                    + '<div class="result-title"><a href="/pdf/' + r.id + '" target="_blank">' + escapeHtml(r.filename) + '</a>'
+                    + ' <a href="/text/' + r.id + (currentQuery ? '?q=' + encodeURIComponent(currentQuery) : '') + '" target="_blank" style="font-size:0.75em;color:#aaa;text-decoration:underline;text-decoration-color:#555;font-weight:normal;">[text]</a></div>'
                     + '<div class="result-path">' + escapeHtml(r.path) + '</div>';
                 if (r.snippet) html += '<div class="result-snippet">' + escapeHtml(r.snippet).replace(/&lt;mark&gt;/g, '<mark>').replace(/&lt;\/mark&gt;/g, '</mark>') + '</div>';
                 html += '<div class="result-meta">' + escapeHtml(r.size);

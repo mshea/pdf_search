@@ -11,6 +11,9 @@ Full-text search over a local PDF library with a web interface. Uses SQLite FTS5
 - Filename matches ranked above content matches
 - Sort results by relevance, name, or date (toggle ascending/descending)
 - Search syntax: `"exact phrase"`, `-exclude`, `OR`, `prefix*`, `NEAR/N`, `path:"folder"`, `filename:term`
+- Text view for each PDF with on-the-fly cleanup of pdftotext output (paragraph rejoining, header/footer removal, whitespace normalization)
+- Search term highlighting in text view with match count and prev/next navigation
+- Research API (`/api/research?q=&limit=`) returns JSON passages for other tools
 - AJAX-powered results (no page reloads)
 - Automatic indexing on startup, hourly, and on demand from the UI
 - Live indexing progress in the web UI
@@ -87,6 +90,25 @@ Edit `config.py` or set environment variables:
 | `NEAR/N` | `dragon NEAR/5 lair` | Words within N words of each other |
 | `path:"folder"` | `path:"D&D 5e"` | Filter results to a folder |
 | `filename:term` | `filename:dragon` | Search filenames only |
+
+## Text View
+
+Each search result includes a `[text]` link that opens a cleaned, readable version of the PDF's extracted text. The cleanup pipeline:
+
+- Removes repeated headers/footers (detected across form-feed page boundaries)
+- Rejoins paragraph lines broken by column wrapping
+- Fixes hyphenated line breaks (`word-\n` → `word`)
+- Collapses excessive whitespace and blank lines
+
+When opened from a search result, matching terms are highlighted with a match counter and prev/next navigation buttons.
+
+## Research API
+
+```
+GET /api/research?q=<query>&limit=<n>
+```
+
+Returns JSON with passages (~1000 chars each) from the top matching documents. Default limit is 5, max 20. Useful for integration into other tools.
 
 ## CLI Search
 

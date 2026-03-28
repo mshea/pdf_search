@@ -13,7 +13,8 @@ import sys
 import threading
 import time
 
-from flask import Flask, render_template, request, send_file, jsonify
+from collections import Counter
+from flask import Flask, render_template, request, send_file, jsonify, abort
 
 # Allow imports from the project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -302,6 +303,60 @@ def do_search(query):
     return results
 
 
+def clean_text(raw):
+    """Fast regex cleanup of raw pdftotext output."""
+    if not raw:
+        return ''
+
+    # Remove repeated header/footer lines (appear on multiple form-feed pages)
+    pages = raw.split('\f')
+    if len(pages) > 2:
+        line_counts = Counter()
+        for page in pages:
+            lines = page.strip().splitlines()
+            # Check first and last 3 lines of each page
+            candidates = lines[:3] + lines[-3:]
+            for line in candidates:
+                stripped = line.strip()
+                if stripped:
+                    line_counts[stripped] += 1
+        # Lines appearing on >40% of pages are likely headers/footers
+        threshold = max(3, len(pages) * 0.4)
+        repeated = {line for line, count in line_counts.items() if count >= threshold}
+        if repeated:
+            cleaned_pages = []
+            for page in pages:
+                lines = page.splitlines()
+                cleaned_pages.append('\n'.join(
+                    line for line in lines if line.strip() not in repeated
+                ))
+            raw = '\n'.join(cleaned_pages)
+
+    # Strip form-feed characters
+    raw = raw.replace('\f', '')
+
+    # Fix hyphenated line breaks: word-\n -> word
+    raw = re.sub(r'(\w)-\n(\w)', r'\1\2', raw)
+
+    # Strip trailing whitespace per line
+    raw = re.sub(r'[ \t]+$', '', raw, flags=re.MULTILINE)
+
+    # Collapse multiple spaces to single (preserve newlines)
+    raw = re.sub(r'[^\S\n]+', ' ', raw)
+
+    # Rejoin paragraph lines broken by pdftotext column wrapping.
+    # Join when the line ends mid-sentence (lowercase, comma, or "the/a/of/and"
+    # style words) and the next line continues text (not a blank line).
+    # Also join when a line ends with a lowercase word and the next starts
+    # with a capital (handles proper nouns mid-sentence like "the\nTumbledowns").
+    raw = re.sub(r'([a-z,;:\-])\n(?!\n)(\S)', r'\1 \2', raw)
+
+    # Collapse 3+ consecutive blank lines to 2
+    raw = re.sub(r'\n{3,}', '\n\n', raw)
+
+    return raw.strip()
+
+
 # --- Routes ---
 
 @app.route('/')
@@ -424,6 +479,101 @@ def reindex():
 @app.route('/reindex/status')
 def reindex_status():
     return jsonify(_indexer_status)
+
+
+@app.route('/text/<int:doc_id>')
+def text_view(doc_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, filename, pdf_path FROM documents WHERE id = ?", (doc_id,))
+    doc = c.fetchone()
+    if not doc:
+        conn.close()
+        abort(404)
+    c.execute("SELECT content FROM documents_fts WHERE rowid = ?", (doc_id,))
+    fts_row = c.fetchone()
+    conn.close()
+    if not fts_row or not fts_row['content']:
+        abort(404)
+    cleaned = clean_text(fts_row['content'])
+    query = request.args.get('q', '').strip()
+    # Extract highlight terms (strip operators, quotes, path/filename prefixes)
+    highlight_terms = []
+    if query:
+        raw_q = re.sub(r'path:"[^"]+"|path:\S+', '', query)
+        raw_q = re.sub(r'filename:\S+', '', raw_q)
+        for phrase in re.findall(r'"([^"]+)"', raw_q):
+            highlight_terms.append(phrase)
+        raw_q = re.sub(r'"[^"]*"', '', raw_q)
+        for token in raw_q.split():
+            if (token.upper() != 'OR' and not token.startswith('-')
+                    and not re.match(r'NEAR/\d+', token, re.IGNORECASE)
+                    and len(token) > 1 and token.lower() not in STOPWORDS):
+                highlight_terms.append(token.rstrip('*'))
+    return render_template('text.html', filename=doc['filename'], doc_id=doc_id,
+                           content=cleaned, site_title=config.SITE_TITLE,
+                           highlight_terms=highlight_terms)
+
+
+@app.route('/api/research')
+def research_api():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'error': 'missing q parameter'}), 400
+
+    limit = min(int(request.args.get('limit', 5)), 20)
+    search_results = do_search(query)[:limit]
+
+    if not search_results:
+        return jsonify({'query': query, 'results': []})
+
+    # Extract search terms for passage extraction
+    words, _, _ = _parse_query(query)
+    terms = [w.strip('"').lower() for w in words
+             if w.upper() != 'OR' and not w.startswith('-')
+             and not re.match(r'NEAR/\\d+', w, re.IGNORECASE)]
+
+    conn = get_db()
+    c = conn.cursor()
+    results = []
+
+    for sr in search_results:
+        c.execute("SELECT content FROM documents_fts WHERE rowid = ?", (sr['id'],))
+        row = c.fetchone()
+        if not row or not row['content']:
+            continue
+
+        content = row['content']
+        passages = []
+        content_lower = content.lower()
+
+        for term in terms:
+            start = 0
+            while True:
+                pos = content_lower.find(term.lower(), start)
+                if pos == -1:
+                    break
+                window_start = max(0, pos - 500)
+                window_end = min(len(content), pos + len(term) + 500)
+                passage = clean_text(content[window_start:window_end])
+                if passage and passage not in passages:
+                    passages.append(passage)
+                start = pos + len(term)
+                if len(passages) >= 5:
+                    break
+            if len(passages) >= 5:
+                break
+
+        if passages:
+            results.append({
+                'id': sr['id'],
+                'filename': sr['filename'],
+                'path': sr['path'],
+                'passages': passages,
+            })
+
+    conn.close()
+    return jsonify({'query': query, 'results': results})
 
 
 if __name__ == '__main__':

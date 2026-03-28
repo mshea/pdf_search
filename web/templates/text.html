@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ filename }} - {{ site_title }}</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 18px;
+            margin: 0;
+            padding: 0;
+            background: #000;
+            color: #ddd;
+        }
+        .header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #333;
+            background: #000;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .header h1 {
+            font-size: 1.1em;
+            margin: 0 0 8px 0;
+            color: #fff;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+        .header-links {
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .header-links a {
+            color: #aaa;
+            text-decoration: underline;
+            text-decoration-color: #555;
+        }
+        .header-links a:hover { color: #fff; }
+        .match-nav {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #aaa;
+            font-size: 0.85em;
+        }
+        .match-nav button {
+            background: none;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 2px 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: inherit;
+        }
+        .match-nav button:hover { border-color: #fff; }
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px 20px 60px 20px;
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            font-size: 1em;
+            line-height: 1.6;
+            margin: 0;
+            color: #ddd;
+        }
+        mark {
+            background: #fff;
+            color: #000;
+            padding: 1px 3px;
+        }
+        mark.current {
+            background: #f0c040;
+        }
+        @media (max-width: 768px) {
+            body { font-size: 16px; }
+            .content { padding: 16px 14px 40px 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ filename }}</h1>
+        <div class="header-links">
+            <a href="/pdf/{{ doc_id }}" target="_blank">View PDF</a>
+            <a href="/">Search</a>
+            <span class="match-nav" id="match-nav" style="display:none;">
+                <button onclick="jumpMatch(-1)">&uarr;</button>
+                <span id="match-count"></span>
+                <button onclick="jumpMatch(1)">&darr;</button>
+            </span>
+        </div>
+    </div>
+    <div class="content">
+        <pre id="text-content">{{ content }}</pre>
+    </div>
+    <script>
+        var highlightTerms = {{ highlight_terms | tojson }};
+        var marks = [];
+        var currentMark = -1;
+
+        (function() {
+            if (!highlightTerms.length) return;
+
+            var pre = document.getElementById('text-content');
+            var html = pre.innerHTML;
+
+            // Build a single regex matching all terms, longest first
+            var sorted = highlightTerms.slice().sort(function(a, b) { return b.length - a.length; });
+            var escaped = sorted.map(function(t) {
+                return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            });
+            var re = new RegExp('(' + escaped.join('|') + ')', 'gi');
+
+            html = html.replace(re, '<mark>$1</mark>');
+            pre.innerHTML = html;
+
+            marks = pre.querySelectorAll('mark');
+            if (marks.length > 0) {
+                var nav = document.getElementById('match-nav');
+                nav.style.display = '';
+                document.getElementById('match-count').textContent = marks.length + ' matches';
+                jumpMatch(1);
+            }
+        })();
+
+        function jumpMatch(dir) {
+            if (!marks.length) return;
+            if (currentMark >= 0 && currentMark < marks.length) {
+                marks[currentMark].classList.remove('current');
+            }
+            currentMark += dir;
+            if (currentMark >= marks.length) currentMark = 0;
+            if (currentMark < 0) currentMark = marks.length - 1;
+            marks[currentMark].classList.add('current');
+            marks[currentMark].scrollIntoView({ block: 'center', behavior: 'smooth' });
+            document.getElementById('match-count').textContent = (currentMark + 1) + ' / ' + marks.length;
+        }
+    </script>
+</body>
+</html>
