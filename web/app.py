@@ -4,6 +4,7 @@ PDF Search web interface.
 Flask app with full-text search, folder browsing, and PDF serving.
 """
 
+from html import escape as html_escape
 import logging
 import os
 import re
@@ -75,6 +76,7 @@ STOPWORDS = frozenset({
 def get_db():
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -88,36 +90,34 @@ def format_size(size_bytes):
     return f"{size_bytes:.1f} TB"
 
 
+_PDF_DIR_PREFIX = config.PDF_DIR if config.PDF_DIR.endswith('/') else config.PDF_DIR + '/'
+
+
 def _make_result(row):
     """Build a result dict from a database row."""
     return {
         'id': row['id'], 'filename': row['filename'],
-        'path': _rel_path(row['pdf_path']),
+        'path': row['pdf_path'].removeprefix(_PDF_DIR_PREFIX),
         'size': format_size(row['file_size']),
         'modified': row['modified_date'] or '',
-        'snippet': row['snippet'] if 'snippet' in row.keys() else ''
+        'snippet': '',
     }
 
 
-def _pdf_dir_with_slash():
-    """Return PDF_DIR ending with /."""
-    d = config.PDF_DIR
-    return d if d.endswith('/') else d + '/'
-
-
-def _rel_path(pdf_path):
-    """Strip the configured PDF_DIR prefix to get a relative path."""
-    return pdf_path.replace(_pdf_dir_with_slash(), '')
+def _highlight_excerpt(excerpt, terms):
+    """Escape an excerpt and wrap matching terms in <mark> tags."""
+    if not excerpt:
+        return ''
+    text = html_escape(excerpt.strip())
+    for term in terms:
+        pattern = re.compile(re.escape(html_escape(term)), re.IGNORECASE)
+        text = pattern.sub(lambda m: f'<mark>{m.group()}</mark>', text)
+    return '...' + text + '...'
 
 
 def _escape_like(value):
     """Escape LIKE wildcard characters in a value."""
     return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-
-
-def _filter_stopwords(query):
-    words = [w for w in query.split() if w.lower() not in STOPWORDS and len(w) > 1]
-    return words if words else query.split()
 
 
 def _parse_query(query):
@@ -236,38 +236,64 @@ def do_search(query):
     c = conn.cursor()
     results = []
     seen_ids = set()
+    ranked_rows = []
 
     try:
-        # Filename matches (highest priority)
+        # Pass 1: rank without snippets (fast)
+        # Filename matches first
         c.execute(f"""
             SELECT d.id, d.filename, d.pdf_path, d.file_size, d.modified_date,
-                   snippet(documents_fts, 1, '<mark>', '</mark>', '...', 50) as snippet,
                    -1000.0 as score
             FROM documents_fts
             JOIN documents d ON d.id = documents_fts.rowid
             WHERE documents_fts MATCH ?{path_clause}
-            ORDER BY score LIMIT 500
+            ORDER BY score
         """, [filename_query] + params_extra)
 
         for row in c.fetchall():
             seen_ids.add(row['id'])
-            results.append(_make_result(row))
+            ranked_rows.append(row)
 
         # Content matches
         if not filename_only:
             c.execute(f"""
                 SELECT d.id, d.filename, d.pdf_path, d.file_size, d.modified_date,
-                       snippet(documents_fts, 1, '<mark>', '</mark>', '...', 50) as snippet,
                        bm25(documents_fts, 10000.0, 1.0) as score
                 FROM documents_fts
                 JOIN documents d ON d.id = documents_fts.rowid
                 WHERE documents_fts MATCH ?{path_clause}
-                ORDER BY score LIMIT 500
+                ORDER BY score
             """, [fts_query] + params_extra)
 
             for row in c.fetchall():
                 if row['id'] not in seen_ids:
-                    results.append(_make_result(row))
+                    ranked_rows.append(row)
+
+        # Pass 2: extract snippet windows in SQL (avoids slow FTS5 snippet())
+        if ranked_rows:
+            # Extract search terms for snippet highlighting
+            terms = [w.strip('"').lower() for w in raw.split()
+                     if w.upper() != 'OR' and not w.startswith('-')
+                     and not re.match(r'NEAR/\d+', w, re.IGNORECASE)]
+            first_term = terms[0] if terms else ''
+
+            ids = [row['id'] for row in ranked_rows]
+            placeholders = ','.join('?' * len(ids))
+            c.execute(f"""
+                SELECT rowid as id,
+                       substr(content,
+                              MAX(1, instr(LOWER(content), ?) - 80),
+                              200) as excerpt
+                FROM documents_fts
+                WHERE rowid IN ({placeholders})
+            """, [first_term] + ids)
+            excerpt_map = {row['id']: row['excerpt'] for row in c.fetchall()}
+
+            for row in ranked_rows:
+                result = _make_result(row)
+                excerpt = excerpt_map.get(row['id'], '')
+                result['snippet'] = _highlight_excerpt(excerpt, terms)
+                results.append(result)
     except sqlite3.OperationalError:
         pass
     finally:
@@ -304,7 +330,7 @@ def search():
 @app.route('/browse')
 def browse():
     path = request.args.get('path', '').strip()
-    base = _pdf_dir_with_slash()
+    base = _PDF_DIR_PREFIX
     full_path = base + path + '/' if path else base
 
     results = []
@@ -360,7 +386,7 @@ def stats():
 @app.route('/folders')
 def folders():
     path = request.args.get('path', '').strip()
-    base = _pdf_dir_with_slash()
+    base = _PDF_DIR_PREFIX
     full_base = base + path + '/' if path else base
 
     folders_dict = {}
@@ -385,6 +411,9 @@ def folders():
 
 @app.route('/reindex', methods=['POST'])
 def reindex():
+    origin = request.headers.get('Origin', '')
+    if origin and not origin.startswith(('http://192.168.', 'http://localhost', 'http://127.0.0.1', 'https://home.zinjalabs.com')):
+        return jsonify({'error': 'forbidden'}), 403
     if _indexer_status['running']:
         return jsonify({'status': 'already_running'})
     t = threading.Thread(target=_run_indexer, daemon=True)
@@ -402,4 +431,4 @@ if __name__ == '__main__':
     # indexer in the child (WERKZEUG_RUN_MAIN is set) or when not in debug mode.
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
         threading.Thread(target=_periodic_indexer, daemon=True).start()
-    app.run(host=config.HOST, port=config.PORT, debug=True)
+    app.run(host=config.HOST, port=config.PORT, debug=False)
