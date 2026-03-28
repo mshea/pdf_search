@@ -639,6 +639,12 @@
             document.getElementById('reindex-status').innerHTML = html;
         }
 
+        function refreshDocCount() {
+            fetch('/stats').then(function(r) { return r.json(); }).then(function(s) {
+                document.querySelector('.stats').firstChild.textContent = s.total_documents + ' documents indexed \u00b7 ';
+            });
+        }
+
         function updateLink() {
             return '<a class="reindex-link" onclick="triggerReindex()">update index</a>';
         }
@@ -673,16 +679,14 @@
                     .then(function(data) {
                         if (data.running) {
                             setReindexStatus(data.message || 'Updating index...');
+                            refreshDocCount();
                         } else {
                             clearInterval(_reindexPoll);
+                            refreshDocCount();
                             if (data.error) {
                                 setReindexStatus('Error: ' + escapeHtml(data.error) + ' ' + updateLink());
                             } else if (data.last_run) {
                                 setReindexStatus('Last indexed ' + friendlyTime(data.last_run) + ' &middot; ' + updateLink());
-                                fetch('/stats').then(function(r) { return r.json(); }).then(function(s) {
-                                    var statsDiv = document.querySelector('.stats');
-                                    statsDiv.firstChild.textContent = s.total_documents + ' documents indexed \u00b7 ';
-                                });
                             }
                         }
                     });

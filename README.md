@@ -1,6 +1,6 @@
 # PDF Search
 
-Full-text search over a local PDF library with a web interface. Uses SQLite FTS5 for fast searching and `pdftotext` for text extraction. Search results link directly to the PDF files, served through Flask from your configured PDF directory. Disclaimer: This was totally vibe coded with Claude Code.
+Full-text search over a local PDF library with a web interface. Uses SQLite FTS5 for fast searching and `pdftotext` for text extraction. Search results link directly to the PDF files, served through Flask from your configured PDF directory. Only PDFs with embedded text layers are indexed — scanned image-only PDFs will be skipped. Disclaimer: This was totally vibe coded with Claude Code.
 
 ## Features
 

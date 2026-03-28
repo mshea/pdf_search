@@ -46,7 +46,8 @@ def _run_indexer():
 
     try:
         init_db(config.DB_PATH)
-        scan_directory(config.PDF_DIR, config.DB_PATH, progress_callback=_on_progress)
+        scan_directory(config.PDF_DIR, config.DB_PATH, progress_callback=_on_progress,
+                       use_threads=True)
         _indexer_status['last_run'] = time.strftime('%Y-%m-%d %H:%M:%S')
         _indexer_status['message'] = ''
     except Exception as e:
@@ -279,11 +280,14 @@ def do_search(query):
 
 @app.route('/')
 def index():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) as count FROM documents")
-    total_docs = c.fetchone()['count']
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) as count FROM documents")
+        total_docs = c.fetchone()['count']
+        conn.close()
+    except sqlite3.OperationalError:
+        total_docs = 0
     return render_template('index.html', total_docs=total_docs,
                            site_title=config.SITE_TITLE)
 
@@ -303,20 +307,23 @@ def browse():
     base = _pdf_dir_with_slash()
     full_path = base + path + '/' if path else base
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, filename, pdf_path, file_size, modified_date
-        FROM documents WHERE pdf_path LIKE ? ESCAPE '\\'
-        ORDER BY filename
-    """, (_escape_like(full_path) + '%',))
-
     results = []
-    for row in c.fetchall():
-        rel_from_folder = row['pdf_path'][len(full_path):]
-        if '/' not in rel_from_folder:
-            results.append(_make_result(row))
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, filename, pdf_path, file_size, modified_date
+            FROM documents WHERE pdf_path LIKE ? ESCAPE '\\'
+            ORDER BY filename
+        """, (_escape_like(full_path) + '%',))
+
+        for row in c.fetchall():
+            rel_from_folder = row['pdf_path'][len(full_path):]
+            if '/' not in rel_from_folder:
+                results.append(_make_result(row))
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
     return jsonify({'results': results, 'count': len(results), 'path': path})
 
 
@@ -336,13 +343,17 @@ def serve_pdf(doc_id):
 
 @app.route('/stats')
 def stats():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) as count FROM documents")
-    total_docs = c.fetchone()['count']
-    c.execute("SELECT SUM(file_size) as total_size FROM documents")
-    total_size = c.fetchone()['total_size'] or 0
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) as count FROM documents")
+        total_docs = c.fetchone()['count']
+        c.execute("SELECT SUM(file_size) as total_size FROM documents")
+        total_size = c.fetchone()['total_size'] or 0
+        conn.close()
+    except sqlite3.OperationalError:
+        total_docs = 0
+        total_size = 0
     return jsonify({'total_documents': total_docs, 'total_size': format_size(total_size)})
 
 
@@ -352,19 +363,22 @@ def folders():
     base = _pdf_dir_with_slash()
     full_base = base + path + '/' if path else base
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT pdf_path FROM documents WHERE pdf_path LIKE ? ESCAPE '\\'",
-              (_escape_like(full_base) + '%',))
-
     folders_dict = {}
-    for row in c.fetchall():
-        rel = row['pdf_path'][len(full_base):]
-        if '/' in rel:
-            folder = rel.split('/')[0]
-            folders_dict[folder] = folders_dict.get(folder, 0) + 1
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT pdf_path FROM documents WHERE pdf_path LIKE ? ESCAPE '\\'",
+                  (_escape_like(full_base) + '%',))
 
-    conn.close()
+        for row in c.fetchall():
+            rel = row['pdf_path'][len(full_base):]
+            if '/' in rel:
+                folder = rel.split('/')[0]
+                folders_dict[folder] = folders_dict.get(folder, 0) + 1
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
+
     folders_list = [{'name': k, 'count': v} for k, v in sorted(folders_dict.items())]
     return jsonify({'folders': folders_list, 'current_path': path})
 

@@ -8,13 +8,25 @@ import os
 import sqlite3
 import subprocess
 import sys
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+
+import shutil
+
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 
 import config
 
 BATCH_SIZE = 50
+
+# Locate pdftotext binary, checking common Homebrew paths if needed
+PDFTOTEXT = shutil.which('pdftotext')
+if not PDFTOTEXT:
+    for p in ['/opt/homebrew/bin/pdftotext', '/usr/local/bin/pdftotext']:
+        if os.path.isfile(p):
+            PDFTOTEXT = p
+            break
 
 
 def init_db(db_path):
@@ -45,15 +57,25 @@ def init_db(db_path):
             content_rowid=id
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS failed_extractions (
+            pdf_path TEXT UNIQUE NOT NULL,
+            file_size INTEGER,
+            modified_date TIMESTAMP,
+            failed_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     conn.close()
 
 
 def extract_text(pdf_path):
     """Extract text from a PDF using pdftotext."""
+    if not PDFTOTEXT:
+        return None
     try:
         result = subprocess.run(
-            ['pdftotext', '-enc', 'UTF-8', pdf_path, '-'],
+            [PDFTOTEXT, '-enc', 'UTF-8', pdf_path, '-'],
             capture_output=True, text=True, timeout=300
         )
         if result.returncode == 0:
@@ -79,7 +101,7 @@ def _extract_worker(pdf_path):
     }
 
 
-def scan_directory(directory, db_path, progress_callback=None):
+def scan_directory(directory, db_path, progress_callback=None, use_threads=False):
     """Scan a directory tree for PDFs and index them."""
     def _progress(msg):
         if progress_callback:
@@ -94,6 +116,10 @@ def scan_directory(directory, db_path, progress_callback=None):
     known = {row[0]: (row[1], row[2], row[3]) for row in c.fetchall()}
     known_paths = set(known.keys())
 
+    # Load previously failed extractions
+    c.execute("SELECT pdf_path, file_size, modified_date FROM failed_extractions")
+    failed = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+
     # Collect all PDFs on disk
     pdf_files = []
     disk_paths = set()
@@ -104,43 +130,64 @@ def scan_directory(directory, db_path, progress_callback=None):
                 pdf_files.append(p)
                 disk_paths.add(p)
 
-    _progress(f"Found {len(pdf_files)} PDF files")
+    _progress(f"Scanning {len(pdf_files)} PDF files...")
 
     # Filter to only files that need processing
     to_process = []
     for pdf_path in pdf_files:
+        try:
+            stat = os.stat(pdf_path)
+        except OSError:
+            continue
+        size = stat.st_size
+        mdate = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+
+        # Skip previously failed files (unless the file has changed)
+        prev_fail = failed.get(pdf_path)
+        if prev_fail and prev_fail[0] == size and prev_fail[1] == mdate:
+            continue
+
+        # Skip already-indexed files (unless the file has changed)
         existing = known.get(pdf_path)
         if existing:
             _, existing_size, existing_mdate = existing
-            try:
-                stat = os.stat(pdf_path)
-            except OSError:
+            if size == existing_size and mdate == existing_mdate:
                 continue
-            mdate = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-            if stat.st_size == existing_size and mdate == existing_mdate:
-                continue
+
         to_process.append(pdf_path)
 
     if to_process:
-        _progress(f"Processing {len(to_process)} new/updated PDFs")
+        _progress(f"Indexing 0 of {len(to_process)} new PDFs...")
     else:
-        _progress("No new or updated PDFs to process")
+        _progress("No new PDFs to process")
 
     # Parallel extraction + serial DB writes
     processed = 0
     batch_count = 0
-    with ProcessPoolExecutor(max_workers=config.MAX_WORKERS) as pool:
+    Executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+    with Executor(max_workers=config.MAX_WORKERS) as pool:
         futures = {pool.submit(_extract_worker, p): p for p in to_process}
         for future in as_completed(futures):
             result = future.result()
             if result is None:
                 src = futures[future]
-                _progress(f"  Failed: {os.path.basename(src)}")
+                print(f"  Failed: {os.path.basename(src)}")
+                try:
+                    st = os.stat(src)
+                    md = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    c.execute("""
+                        INSERT OR REPLACE INTO failed_extractions
+                        (pdf_path, file_size, modified_date, failed_date)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    """, (src, st.st_size, md))
+                    conn.commit()
+                except OSError:
+                    pass
                 continue
 
             pdf_path = result['pdf_path']
             existing = known.get(pdf_path)
-            _progress(f"  Indexed: {result['filename']}")
+            print(f"  Indexed: {result['filename']}")
 
             if existing:
                 doc_id = existing[0]
@@ -166,13 +213,19 @@ def scan_directory(directory, db_path, progress_callback=None):
 
             processed += 1
             batch_count += 1
-            if progress_callback:
-                progress_callback(f"Indexing {processed} of {len(to_process)} PDFs...")
+            _progress(f"Indexing {processed} of {len(to_process)} new PDFs...")
             if batch_count >= BATCH_SIZE:
                 conn.commit()
                 batch_count = 0
 
     if batch_count > 0:
+        conn.commit()
+
+    # Remove stale failure records for PDFs no longer on disk
+    stale_failures = set(failed.keys()) - disk_paths
+    if stale_failures:
+        for path in stale_failures:
+            c.execute("DELETE FROM failed_extractions WHERE pdf_path = ?", (path,))
         conn.commit()
 
     # Remove stale records for PDFs no longer on disk
@@ -186,13 +239,17 @@ def scan_directory(directory, db_path, progress_callback=None):
         conn.commit()
 
     conn.close()
-    _progress(f"Processed {processed} new/updated PDFs")
+    print(f"Processed {processed} new/updated PDFs")
     if stale:
-        _progress(f"Removed {len(stale)} stale records")
-    _progress(f"Database: {db_path}")
+        print(f"Removed {len(stale)} stale records")
+    print(f"Database: {db_path}")
 
 
 if __name__ == "__main__":
+    if not PDFTOTEXT:
+        print("Error: pdftotext not found. Install poppler-utils (Linux) or poppler (macOS).")
+        sys.exit(1)
+
     pdf_dir = sys.argv[1] if len(sys.argv) > 1 else config.PDF_DIR
 
     if not os.path.isdir(pdf_dir):
