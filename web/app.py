@@ -4,18 +4,65 @@ PDF Search web interface.
 Flask app with full-text search, folder browsing, and PDF serving.
 """
 
+import logging
 import os
 import re
 import sqlite3
 import sys
+import threading
+import time
 
 from flask import Flask, render_template, request, send_file, jsonify
 
 # Allow imports from the project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from extractor import init_db, scan_directory
 
 app = Flask(__name__)
+logger = logging.getLogger(__name__)
+
+# --- Indexer state ---
+_indexer_lock = threading.Lock()
+_indexer_status = {
+    'running': False,
+    'last_run': None,
+    'message': '',
+    'error': None,
+}
+
+
+def _run_indexer():
+    """Run the extractor in a background thread."""
+    with _indexer_lock:
+        if _indexer_status['running']:
+            return
+        _indexer_status['running'] = True
+        _indexer_status['error'] = None
+        _indexer_status['message'] = 'Starting...'
+
+    def _on_progress(msg):
+        _indexer_status['message'] = msg
+
+    try:
+        init_db(config.DB_PATH)
+        scan_directory(config.PDF_DIR, config.DB_PATH, progress_callback=_on_progress)
+        _indexer_status['last_run'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        _indexer_status['message'] = ''
+    except Exception as e:
+        logger.exception("Indexer error")
+        _indexer_status['error'] = str(e)
+        _indexer_status['message'] = ''
+    finally:
+        _indexer_status['running'] = False
+
+
+def _periodic_indexer(interval=3600):
+    """Run the indexer on startup, then every `interval` seconds."""
+    while True:
+        _run_indexer()
+        time.sleep(interval)
+
 
 STOPWORDS = frozenset({
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
@@ -322,5 +369,23 @@ def folders():
     return jsonify({'folders': folders_list, 'current_path': path})
 
 
+@app.route('/reindex', methods=['POST'])
+def reindex():
+    if _indexer_status['running']:
+        return jsonify({'status': 'already_running'})
+    t = threading.Thread(target=_run_indexer, daemon=True)
+    t.start()
+    return jsonify({'status': 'started'})
+
+
+@app.route('/reindex/status')
+def reindex_status():
+    return jsonify(_indexer_status)
+
+
 if __name__ == '__main__':
+    # In debug mode, Flask's reloader spawns a child process. Only start the
+    # indexer in the child (WERKZEUG_RUN_MAIN is set) or when not in debug mode.
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        threading.Thread(target=_periodic_indexer, daemon=True).start()
     app.run(host=config.HOST, port=config.PORT, debug=True)

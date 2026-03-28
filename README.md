@@ -11,7 +11,9 @@ Full-text search over a local PDF library with a web interface. Uses SQLite FTS5
 - Sort results by relevance, name, or date (toggle ascending/descending)
 - Search syntax: `"exact phrase"`, `-exclude`, `OR`, `prefix*`, `NEAR/N`, `path:"folder"`, `filename:term`
 - AJAX-powered results (no page reloads)
+- Automatic indexing on startup, hourly, and on demand from the UI
 - Parallel PDF extraction (defaults to 3 workers, configure in the config)
+- Live indexing progress in the web UI
 - Stale record cleanup on re-index
 - CLI search tool
 
@@ -38,26 +40,22 @@ pip install flask
 ## Setup
 
 1. Clone this repo.
-2. Copy `config.py.sample` to `config.py` and update it with your settings. This config is shared by the extractor, the web server, and the CLI search tool.
+2. Copy `config.py.sample` to `config.py` and set `PDF_DIR` to your PDF directory.
 
 ```bash
 cp config.py.sample config.py
 ```
 
-3. Index your PDFs:
-
-```bash
-python3 extractor.py /path/to/your/pdfs
-```
-
-4. Start the web server:
+3. Start the web server:
 
 ```bash
 cd web
 python3 app.py
 ```
 
-5. Open `http://localhost:5555` in a browser.
+4. Open `http://localhost:5555` in a browser.
+
+The app automatically indexes your PDFs on startup. Progress is shown in the web UI. Once indexing completes, search is available immediately. New or changed PDFs are picked up automatically every hour, or you can click "update index" in the UI at any time.
 
 ## Configuration
 
@@ -90,9 +88,11 @@ Edit `config.py` or set environment variables:
 python3 search.py "search terms" [limit]
 ```
 
-## Re-indexing
+## Indexing
 
-Run the extractor again to pick up new or changed PDFs. Already-indexed files are skipped (tracked by file size and modification time). Deleted PDFs are automatically removed from the index.
+The app indexes automatically — on startup, every hour, and on demand via the "update index" link in the UI. Already-indexed files are skipped (tracked by file size and modification time). Deleted PDFs are automatically removed from the index.
+
+You can also run the extractor standalone if needed:
 
 ```bash
 python3 extractor.py

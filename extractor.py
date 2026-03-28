@@ -79,8 +79,13 @@ def _extract_worker(pdf_path):
     }
 
 
-def scan_directory(directory, db_path):
+def scan_directory(directory, db_path, progress_callback=None):
     """Scan a directory tree for PDFs and index them."""
+    def _progress(msg):
+        if progress_callback:
+            progress_callback(msg)
+        print(msg)
+
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
 
@@ -99,7 +104,7 @@ def scan_directory(directory, db_path):
                 pdf_files.append(p)
                 disk_paths.add(p)
 
-    print(f"Found {len(pdf_files)} PDF files")
+    _progress(f"Found {len(pdf_files)} PDF files")
 
     # Filter to only files that need processing
     to_process = []
@@ -117,9 +122,9 @@ def scan_directory(directory, db_path):
         to_process.append(pdf_path)
 
     if to_process:
-        print(f"Processing {len(to_process)} new/updated PDFs")
+        _progress(f"Processing {len(to_process)} new/updated PDFs")
     else:
-        print("No new or updated PDFs to process")
+        _progress("No new or updated PDFs to process")
 
     # Parallel extraction + serial DB writes
     processed = 0
@@ -130,12 +135,12 @@ def scan_directory(directory, db_path):
             result = future.result()
             if result is None:
                 src = futures[future]
-                print(f"  Failed: {os.path.basename(src)}")
+                _progress(f"  Failed: {os.path.basename(src)}")
                 continue
 
             pdf_path = result['pdf_path']
             existing = known.get(pdf_path)
-            print(f"  Indexed: {result['filename']}")
+            _progress(f"  Indexed: {result['filename']}")
 
             if existing:
                 doc_id = existing[0]
@@ -161,6 +166,8 @@ def scan_directory(directory, db_path):
 
             processed += 1
             batch_count += 1
+            if progress_callback:
+                progress_callback(f"Indexing {processed} of {len(to_process)} PDFs...")
             if batch_count >= BATCH_SIZE:
                 conn.commit()
                 batch_count = 0
@@ -171,7 +178,7 @@ def scan_directory(directory, db_path):
     # Remove stale records for PDFs no longer on disk
     stale = known_paths - disk_paths
     if stale:
-        print(f"Removing {len(stale)} stale records")
+        _progress(f"Removing {len(stale)} stale records")
         for path in stale:
             doc_id = known[path][0]
             c.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
@@ -179,10 +186,10 @@ def scan_directory(directory, db_path):
         conn.commit()
 
     conn.close()
-    print(f"\nProcessed {processed} new/updated PDFs")
+    _progress(f"Processed {processed} new/updated PDFs")
     if stale:
-        print(f"Removed {len(stale)} stale records")
-    print(f"Database: {db_path}")
+        _progress(f"Removed {len(stale)} stale records")
+    _progress(f"Database: {db_path}")
 
 
 if __name__ == "__main__":

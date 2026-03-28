@@ -113,6 +113,9 @@
         /* --- Search form --- */
         h1 { color: #fff; }
         .stats { color: #fff; margin-bottom: 20px; }
+        .reindex-status { color: #aaa; font-size: 0.85em; }
+        .reindex-link { color: #aaa; text-decoration: underline; text-decoration-color: #555; cursor: pointer; }
+        .reindex-link:hover { color: #fff; }
         .search-help { color: #aaa; font-size: 0.85em; margin-bottom: 10px; line-height: 1.6; }
         .example-query { color: #aaa; text-decoration: underline; text-decoration-color: #555; }
         .example-query:hover { color: #fff; }
@@ -252,7 +255,7 @@
                 <div class="content-wrapper">
                     <button class="mobile-folder-btn" onclick="openSidebar()">Folders</button>
                     <h1>{{ site_title }}</h1>
-                    <div class="stats">{{ total_docs }} documents indexed</div>
+                    <div class="stats">{{ total_docs }} documents indexed &middot; <span id="reindex-status" class="reindex-status"></span></div>
                     <div class="search-help">
                         Try: <a href="/?q=%22magic+missile%22" class="example-query">"magic missile"</a>
                         &middot; <a href="/?q=dragon+-chromatic" class="example-query">dragon -chromatic</a>
@@ -628,6 +631,75 @@
             document.getElementById('sidebar').classList.remove('open');
             document.getElementById('sidebar-overlay').classList.remove('open');
         }
+
+        // --- Re-index ---
+        var _reindexPoll = null;
+
+        function setReindexStatus(html) {
+            document.getElementById('reindex-status').innerHTML = html;
+        }
+
+        function updateLink() {
+            return '<a class="reindex-link" onclick="triggerReindex()">update index</a>';
+        }
+
+        function friendlyTime(dateStr) {
+            var d = new Date(dateStr.replace(' ', 'T'));
+            var now = new Date();
+            var diffMs = now - d;
+            var diffMin = Math.floor(diffMs / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return diffMin + ' minute' + (diffMin === 1 ? '' : 's') + ' ago';
+            var diffHr = Math.floor(diffMin / 60);
+            if (diffHr < 24) return diffHr + ' hour' + (diffHr === 1 ? '' : 's') + ' ago';
+            var diffDay = Math.floor(diffHr / 24);
+            if (diffDay < 7) return diffDay + ' day' + (diffDay === 1 ? '' : 's') + ' ago';
+            return d.toLocaleDateString();
+        }
+
+        function triggerReindex() {
+            setReindexStatus('Updating index...');
+            fetch('/reindex', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function() { pollReindexStatus(); })
+                .catch(function() { setReindexStatus('Error starting re-index. ' + updateLink()); });
+        }
+
+        function pollReindexStatus() {
+            if (_reindexPoll) clearInterval(_reindexPoll);
+            _reindexPoll = setInterval(function() {
+                fetch('/reindex/status')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.running) {
+                            setReindexStatus(data.message || 'Updating index...');
+                        } else {
+                            clearInterval(_reindexPoll);
+                            if (data.error) {
+                                setReindexStatus('Error: ' + escapeHtml(data.error) + ' ' + updateLink());
+                            } else if (data.last_run) {
+                                setReindexStatus('Last indexed ' + friendlyTime(data.last_run) + ' &middot; ' + updateLink());
+                                fetch('/stats').then(function(r) { return r.json(); }).then(function(s) {
+                                    var statsDiv = document.querySelector('.stats');
+                                    statsDiv.firstChild.textContent = s.total_documents + ' documents indexed \u00b7 ';
+                                });
+                            }
+                        }
+                    });
+            }, 2000);
+        }
+
+        // Check indexer state on page load
+        fetch('/reindex/status').then(function(r) { return r.json(); }).then(function(data) {
+            if (data.running) {
+                setReindexStatus(data.message || 'Updating index...');
+                pollReindexStatus();
+            } else if (data.last_run) {
+                setReindexStatus('Last indexed ' + friendlyTime(data.last_run) + ' &middot; ' + updateLink());
+            } else {
+                setReindexStatus(updateLink());
+            }
+        });
     </script>
 </body>
 </html>
