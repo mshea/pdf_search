@@ -1,3 +1,13 @@
+# macOS
 .DS_Store
-.DS_Store
-web/__pycache__/app.cpython-311.pyc
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# App-generated
+config.py
+*.db
+*.log
+pdfs/
