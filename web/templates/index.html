@@ -113,7 +113,9 @@
         /* --- Search form --- */
         h1 { color: #fff; }
         .stats { color: #fff; margin-bottom: 20px; }
-        .search-help { color: #aaa; font-size: 0.85em; margin-bottom: 10px; }
+        .search-help { color: #aaa; font-size: 0.85em; margin-bottom: 10px; line-height: 1.6; }
+        .example-query { color: #aaa; text-decoration: underline; text-decoration-color: #555; }
+        .example-query:hover { color: #fff; }
         form { margin: 20px 0; }
         input[type="text"] {
             width: calc(100% - 130px);
@@ -252,7 +254,13 @@
                     <h1>{{ site_title }}</h1>
                     <div class="stats">{{ total_docs }} documents indexed</div>
                     <div class="search-help">
-                        Syntax: <code>path:folder</code> to filter by folder, <code>filename:term</code> for filename-only search
+                        Try: <a href="/?q=%22magic+missile%22" class="example-query">"magic missile"</a>
+                        &middot; <a href="/?q=dragon+-chromatic" class="example-query">dragon -chromatic</a>
+                        &middot; <a href="/?q=wizard+OR+sorcerer" class="example-query">wizard OR sorcerer</a>
+                        &middot; <a href="/?q=necro*" class="example-query">necro*</a>
+                        &middot; <a href="/?q=dragon+NEAR%2F5+lair" class="example-query">dragon NEAR/5 lair</a>
+                        <br>
+                        <code>path:folder</code> to filter by folder &middot; <code>filename:term</code> for filename-only search
                     </div>
                     <form method="GET" action="/" id="search-form" onsubmit="return handleSubmit(event)">
                         <input type="text" name="q" id="search-input" value="" placeholder="Search PDFs..." autofocus>

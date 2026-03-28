@@ -15,7 +15,7 @@ DB_PATH = os.environ.get("PDF_SEARCH_DB", os.path.join(BASE_DIR, "pdf_search.db"
 
 # Web server
 HOST = os.environ.get("PDF_SEARCH_HOST", "0.0.0.0")
-PORT = int(os.environ.get("PDF_SEARCH_PORT", "5000"))
+PORT = int(os.environ.get("PDF_SEARCH_PORT", "5555"))
 
 # Site title (shown in the web UI)
 SITE_TITLE = os.environ.get("PDF_SEARCH_TITLE", "PDF Search")

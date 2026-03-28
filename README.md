@@ -9,7 +9,7 @@ Full-text search over a local PDF library with a web interface. Uses SQLite FTS5
 - Filename matches ranked above content matches
 - Mobile-friendly responsive layout
 - Sort results by relevance, name, or date (toggle ascending/descending)
-- Search syntax: `path:"folder name"`, `filename:term`
+- Search syntax: `"exact phrase"`, `-exclude`, `OR`, `prefix*`, `NEAR/N`, `path:"folder"`, `filename:term`
 - AJAX-powered results (no page reloads)
 - Parallel PDF extraction (defaults to 3 workers, configure in the config)
 - Stale record cleanup on re-index
@@ -57,7 +57,7 @@ cd web
 python3 app.py
 ```
 
-5. Open `http://localhost:5000` in a browser.
+5. Open `http://localhost:5555` in a browser.
 
 ## Configuration
 
@@ -68,9 +68,21 @@ Edit `config.py` or set environment variables:
 | `PDF_SEARCH_PDF_DIR` | `./pdfs` | Directory containing PDFs |
 | `PDF_SEARCH_DB` | `./pdf_search.db` | SQLite database path |
 | `PDF_SEARCH_HOST` | `0.0.0.0` | Web server bind address |
-| `PDF_SEARCH_PORT` | `5000` | Web server port |
+| `PDF_SEARCH_PORT` | `5555` | Web server port |
 | `PDF_SEARCH_TITLE` | `PDF Search` | Site title in the web UI |
 | `PDF_SEARCH_MAX_WORKERS` | `3` | Parallel workers for PDF extraction |
+
+## Search Syntax
+
+| Syntax | Example | Description |
+|---|---|---|
+| `"phrase"` | `"magic missile"` | Exact phrase match |
+| `-word` | `dragon -chromatic` | Exclude results containing a word |
+| `OR` | `wizard OR sorcerer` | Match either term |
+| `word*` | `necro*` | Prefix match (necromancer, necromancy, etc.) |
+| `NEAR/N` | `dragon NEAR/5 lair` | Words within N words of each other |
+| `path:"folder"` | `path:"D&D 5e"` | Filter results to a folder |
+| `filename:term` | `filename:dragon` | Search filenames only |
 
 ## CLI Search
 

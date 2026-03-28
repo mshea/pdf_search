@@ -94,16 +94,89 @@ def _parse_query(query):
     return words, path_filter, filename_only
 
 
+def _build_fts_query(raw):
+    """Translate user search syntax into an FTS5 query string.
+
+    Supported syntax:
+      "exact phrase"   — phrase match
+      -word            — exclude term (NOT)
+      word1 OR word2   — match either term
+      word*            — prefix match
+      word1 NEAR/N word2 — proximity search
+    """
+    fts_parts = []
+
+    # 1. Extract NEAR expressions (e.g. dragon NEAR/5 lair)
+    near_re = r'(\S+)\s+NEAR/(\d+)\s+(\S+)'
+    for m in re.finditer(near_re, raw, re.IGNORECASE):
+        fts_parts.append(f'NEAR("{m.group(1)}" "{m.group(3)}", {m.group(2)})')
+    raw = re.sub(near_re, '', raw, flags=re.IGNORECASE)
+
+    # 2. Extract quoted phrases
+    for m in re.finditer(r'"([^"]+)"', raw):
+        fts_parts.append(f'"{m.group(1)}"')
+    raw = re.sub(r'"[^"]*"', '', raw)
+
+    # 3. Process remaining tokens
+    tokens = raw.split()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+
+        # OR operator: combine previous part with next token
+        if token.upper() == 'OR' and fts_parts and i + 1 < len(tokens):
+            prev = fts_parts.pop()
+            nxt = tokens[i + 1]
+            if nxt.startswith('-'):
+                fts_parts.append(prev)
+            elif nxt.endswith('*'):
+                fts_parts.append(f'{prev} OR {nxt}')
+            else:
+                fts_parts.append(f'{prev} OR "{nxt}"')
+            i += 2
+            continue
+
+        # NOT: -word
+        if token.startswith('-') and len(token) > 1:
+            word = token[1:]
+            fts_parts.append(f'NOT "{word}"')
+            i += 1
+            continue
+
+        # Prefix: word*
+        if token.endswith('*') and len(token) > 1:
+            fts_parts.append(token)
+            i += 1
+            continue
+
+        # Regular word — skip stopwords
+        if token.lower() not in STOPWORDS and len(token) > 1:
+            fts_parts.append(f'"{token}"')
+
+        i += 1
+
+    return ' '.join(fts_parts)
+
+
 def do_search(query):
     """Run a full-text search. Returns a list of result dicts."""
     search_words, path_filter, filename_only = _parse_query(query)
-    words = _filter_stopwords(' '.join(search_words))
-    words = [w.replace('"', '') for w in words]
-    words = [w for w in words if w]
-    if not words:
+    raw = ' '.join(search_words)
+
+    fts_query = _build_fts_query(raw)
+    if not fts_query:
         return []
-    fts_query = ' '.join(f'"{w}"' for w in words)
-    filename_query = ' '.join(f'filename:"{w}"' for w in words)
+
+    # Build filename query: strip NOT/NEAR/OR, keep phrases and plain words
+    fn_phrases = re.findall(r'"([^"]+)"', raw)
+    fn_remaining = re.sub(r'"[^"]*"', '', raw)
+    fn_words = [w for w in fn_remaining.split()
+                if not w.startswith('-') and w.upper() != 'OR'
+                and not re.match(r'NEAR/\d+', w, re.IGNORECASE)
+                and len(w) > 1 and w.lower() not in STOPWORDS]
+    filename_parts = [f'filename:"{p}"' for p in fn_phrases]
+    filename_parts += [f'filename:"{w.rstrip("*")}"' for w in fn_words]
+    filename_query = ' '.join(filename_parts) if filename_parts else fts_query
 
     path_clause = ""
     params_extra = []
