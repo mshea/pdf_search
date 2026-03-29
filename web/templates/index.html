@@ -163,25 +163,17 @@
 
         /* --- Results --- */
         .results-info { margin: 20px 0 10px 0; color: #fff; }
-        .result { margin: 16px 0; padding: 15px; background: #111; }
+        .result { margin: 0; padding: 0.75em 0; background: none; border-bottom: 1px solid #333; }
         .result-title {
             font-weight: bold;
             color: #fff;
-            font-size: 1.1em;
             overflow-wrap: break-word;
             word-break: break-word;
         }
         .result-title a { color: #fff; text-decoration: none; }
-        .result-path {
-            color: #aaa;
-            font-size: 0.9em;
-            margin: 5px 0;
-            overflow-wrap: break-word;
-            word-break: break-word;
-        }
-        .result-snippet { margin: 10px 0; line-height: 1.5; color: #fff; overflow-wrap: break-word; word-break: break-word; }
+        .result-snippet { margin: 2px 0 0 0; line-height: 1.4; color: #fff; overflow-wrap: break-word; word-break: break-word; }
         mark { background: #fff; color: #000; padding: 2px 4px; }
-        .result-meta { color: #aaa; font-size: 0.85em; }
+        .result-meta { color: #aaa; font-size: 0.85em; margin-top: 6px; }
         hr { border: 0; border-top: 1px solid #444; margin: 20px 0; }
 
         /* --- Mobile --- */
@@ -243,7 +235,6 @@
         <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
         <div class="sidebar" id="sidebar">
             <button class="sidebar-close-btn" onclick="closeSidebar()">&#x2715;</button>
-            <h3 style="cursor: pointer;" onclick="goHome()">{{ site_title }}</h3>
             <div style="color: #aaa; font-size: 0.85em; margin-bottom: 10px;">Folders</div>
             <input type="text" id="folder-filter" placeholder="Filter folders..." oninput="filterFolders()">
             <div id="folders-list">Loading...</div>
@@ -262,8 +253,7 @@
                         &middot; <a href="/?q=wizard+OR+sorcerer" class="example-query">wizard OR sorcerer</a>
                         &middot; <a href="/?q=necro*" class="example-query">necro*</a>
                         &middot; <a href="/?q=dragon+NEAR%2F5+lair" class="example-query">dragon NEAR/5 lair</a>
-                        <br>
-                        <code>path:folder</code> to filter by folder &middot; <code>filename:term</code> for filename-only search
+                        &middot; <code>path:folder</code> to filter by folder &middot; <code>filename:term</code> for filename-only search
                     </div>
                     <form method="GET" action="/" id="search-form" onsubmit="return handleSubmit(event)">
                         <input type="text" name="q" id="search-input" value="" placeholder="Search PDFs..." autofocus>
@@ -328,7 +318,7 @@
         // --- Breadcrumbs ---
         function updatePageBreadcrumbs(path) {
             const div = document.getElementById('page-breadcrumbs');
-            let html = '<span class="crumb' + (!path ? ' current' : '') + '" onclick="navigateFolder(\'\')">Home</span>';
+            let html = '<span class="crumb' + (!path ? ' current' : '') + '" onclick="navigateFolder(\'\')">{{ site_title }}</span>';
 
             if (path) {
                 const parts = path.split('/');
@@ -544,14 +534,15 @@
         function buildResultsHtml(results) {
             return results.map(function(r) {
                 var datePart = r.modified ? r.modified.split(' ')[0] : '';
+                var folder = r.path ? r.path.replace(/\/[^\/]*$/, '') : '';
                 var html = '<div class="result">'
                     + '<div class="result-title"><a href="/pdf/' + r.id + '" target="_blank">' + escapeHtml(r.filename) + '</a>'
                     + ' <a href="/text/' + r.id + (currentQuery ? '?q=' + encodeURIComponent(currentQuery) : '') + '" target="_blank" style="font-size:0.75em;color:#aaa;text-decoration:underline;text-decoration-color:#555;font-weight:normal;">[text]</a></div>'
-                    + '<div class="result-path">' + escapeHtml(r.path) + '</div>';
-                if (r.snippet) html += '<div class="result-snippet">' + escapeHtml(r.snippet).replace(/&lt;mark&gt;/g, '<mark>').replace(/&lt;\/mark&gt;/g, '</mark>') + '</div>';
-                html += '<div class="result-meta">' + escapeHtml(r.size);
+                    + '<div class="result-meta">' + escapeHtml(folder) + ' &middot; ' + escapeHtml(r.size);
                 if (datePart) html += ' &middot; ' + escapeHtml(datePart);
-                html += '</div></div>';
+                html += '</div>';
+                if (r.snippet) html += '<div class="result-snippet">' + escapeHtml(r.snippet).replace(/&lt;mark&gt;/g, '<mark>').replace(/&lt;\/mark&gt;/g, '</mark>') + '</div>';
+                html += '</div>';
                 return html;
             }).join('');
         }
