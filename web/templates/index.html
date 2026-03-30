@@ -537,7 +537,7 @@
                 var folder = r.path ? r.path.replace(/\/[^\/]*$/, '') : '';
                 var html = '<div class="result">'
                     + '<div class="result-title"><a href="/pdf/' + r.id + '" target="_blank">' + escapeHtml(r.filename) + '</a>'
-                    + ' <a href="/text/' + r.id + (currentQuery ? '?q=' + encodeURIComponent(currentQuery) : '') + '" target="_blank" style="font-size:0.75em;color:#aaa;text-decoration:underline;text-decoration-color:#555;font-weight:normal;">[text]</a></div>'
+                    + ' <a href="/text/' + r.id + (currentQuery ? '?q=' + encodeURIComponent(currentQuery) : '') + '" target="_blank" style="font-size:0.9em;color:#fff;text-decoration:underline;text-decoration-color:#888;font-weight:normal;">[text]</a></div>'
                     + '<div class="result-meta">' + escapeHtml(folder) + ' &middot; ' + escapeHtml(r.size);
                 if (datePart) html += ' &middot; ' + escapeHtml(datePart);
                 html += '</div>';
