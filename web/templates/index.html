@@ -29,6 +29,11 @@
             display: flex;
             align-items: center;
             flex-wrap: wrap;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1100;
         }
         .breadcrumb-bar .crumb { color: #fff; cursor: pointer; }
         .breadcrumb-bar .crumb:hover { text-decoration: underline; }
@@ -39,6 +44,7 @@
         /* --- Layout wrapper (sidebar + main) --- */
         .app-body {
             display: flex;
+            padding-top: 45px;
         }
 
         /* --- Sidebar (desktop: fixed left panel) --- */
@@ -179,7 +185,6 @@
         /* --- Mobile --- */
         @media (max-width: 768px) {
             body { font-size: 18px; overflow-x: hidden; }
-            .breadcrumb-bar { position: sticky; top: 0; z-index: 1100; }
             .app-body { display: block; }
             .sidebar {
                 display: none;
@@ -424,11 +429,12 @@
         (function init() {
             const urlParams = new URLSearchParams(window.location.search);
             const query = urlParams.get('q') || '';
+            const browse = urlParams.get('browse') || '';
             const input = document.getElementById('search-input');
             input.value = query;
 
             const pathMatch = query.match(/path:"([^"]+)"|path:(\S+)/);
-            currentPath = pathMatch ? (pathMatch[1] || pathMatch[2]) : '';
+            currentPath = pathMatch ? (pathMatch[1] || pathMatch[2]) : browse;
 
             loadFolders(currentPath);
             updatePageBreadcrumbs(currentPath);
@@ -450,7 +456,9 @@
                 query = 'path:"' + currentPath + '" ' + query;
             }
 
-            const url = query ? '/?q=' + encodeURIComponent(query) : '/';
+            const url = query ? '/?q=' + encodeURIComponent(query)
+                : currentPath ? '/?browse=' + encodeURIComponent(currentPath)
+                : '/';
             history.pushState(null, '', url);
 
             if (query) doSearch(query);
@@ -463,7 +471,14 @@
         window.addEventListener('popstate', function() {
             const urlParams = new URLSearchParams(window.location.search);
             const query = urlParams.get('q') || '';
+            const browse = urlParams.get('browse') || '';
             document.getElementById('search-input').value = query;
+
+            const pathMatch = query.match(/path:"([^"]+)"|path:(\S+)/);
+            currentPath = pathMatch ? (pathMatch[1] || pathMatch[2]) : browse;
+            loadFolders(currentPath);
+            updatePageBreadcrumbs(currentPath);
+
             if (query) doSearch(query);
             else if (currentPath) doBrowse(currentPath);
             else document.getElementById('results-container').innerHTML = '';
@@ -589,7 +604,7 @@
                     doSearch(newQuery);
                 } else {
                     input.value = '';
-                    history.pushState(null, '', '/');
+                    history.pushState(null, '', folder ? '/?browse=' + encodeURIComponent(folder) : '/');
                     doBrowse(folder);
                 }
             } else {
