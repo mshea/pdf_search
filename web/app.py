@@ -521,11 +521,15 @@ def research_api():
     if not query:
         return jsonify({'error': 'missing q parameter'}), 400
 
-    limit = min(int(request.args.get('limit', 5)), 20)
-    search_results = do_search(query)[:limit]
+    limit = min(int(request.args.get('limit', 20)), 20)
+    offset = max(int(request.args.get('offset', 0)), 0)
+    max_passages = min(int(request.args.get('passages', 10)), 50)
+    passage_offset = max(int(request.args.get('passage_offset', 0)), 0)
+    all_results = do_search(query)
+    search_results = all_results[offset:offset + limit]
 
     if not search_results:
-        return jsonify({'query': query, 'results': []})
+        return jsonify({'query': query, 'total': len(all_results), 'offset': offset, 'limit': limit, 'results': []})
 
     # Extract search terms for passage extraction
     words, _, _ = _parse_query(query)
@@ -544,9 +548,10 @@ def research_api():
             continue
 
         content = row['content']
-        passages = []
         content_lower = content.lower()
 
+        # Find all non-overlapping match positions
+        all_ranges = []
         for term in terms:
             start = 0
             while True:
@@ -555,25 +560,37 @@ def research_api():
                     break
                 window_start = max(0, pos - 500)
                 window_end = min(len(content), pos + len(term) + 500)
-                passage = clean_text(content[window_start:window_end])
-                if passage and passage not in passages:
-                    passages.append(passage)
+                overlaps = False
+                for rs, re_ in all_ranges:
+                    overlap = min(window_end, re_) - max(window_start, rs)
+                    if overlap > 200:
+                        overlaps = True
+                        break
+                if not overlaps:
+                    all_ranges.append((window_start, window_end))
                 start = pos + len(term)
-                if len(passages) >= 5:
-                    break
-            if len(passages) >= 5:
-                break
 
-        if passages:
+        total_passages = len(all_ranges)
+        # Extract only the requested slice
+        selected_ranges = all_ranges[passage_offset:passage_offset + max_passages]
+        passages = []
+        for ws, we in selected_ranges:
+            passage = clean_text(content[ws:we])
+            if passage:
+                passages.append(passage)
+
+        if passages or total_passages > 0:
             results.append({
                 'id': sr['id'],
                 'filename': sr['filename'],
                 'path': sr['path'],
+                'total_passages': total_passages,
+                'passage_offset': passage_offset,
                 'passages': passages,
             })
 
     conn.close()
-    return jsonify({'query': query, 'results': results})
+    return jsonify({'query': query, 'total': len(all_results), 'offset': offset, 'limit': limit, 'results': results})
 
 
 if __name__ == '__main__':
