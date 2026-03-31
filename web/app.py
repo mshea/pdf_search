@@ -276,7 +276,10 @@ def do_search(query):
             terms = [w.strip('"').lower() for w in raw.split()
                      if w.upper() != 'OR' and not w.startswith('-')
                      and not re.match(r'NEAR/\d+', w, re.IGNORECASE)]
-            first_term = terms[0] if terms else ''
+            # Use the full quoted phrase (if any) so the snippet is centered on
+            # where the phrase actually appears, not just the first word in it.
+            phrase_match = re.search(r'"([^"]+)"', raw)
+            first_term = phrase_match.group(1).lower() if phrase_match else (terms[0] if terms else '')
 
             ids = [row['id'] for row in ranked_rows]
             placeholders = ','.join('?' * len(ids))
