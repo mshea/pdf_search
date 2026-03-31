@@ -105,23 +105,35 @@
     </div>
     <script>
         var highlightTerms = {{ highlight_terms | tojson }};
+        var partialHighlightTerms = {{ partial_highlight_terms | tojson }};
         var marks = [];
         var currentMark = -1;
 
         (function() {
-            if (!highlightTerms.length) return;
+            var allTerms = highlightTerms.concat(partialHighlightTerms);
+            if (!allTerms.length) return;
 
             var pre = document.getElementById('text-content');
             var html = pre.innerHTML;
 
-            // Build a single regex matching all terms, longest first
-            var sorted = highlightTerms.slice().sort(function(a, b) { return b.length - a.length; });
-            var escaped = sorted.map(function(t) {
-                return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            });
-            var re = new RegExp('(' + escaped.join('|') + ')', 'gi');
+            function escapeRe(t) { return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-            html = html.replace(re, '<mark>$1</mark>');
+            // Whole-word terms, longest first
+            var wholeSorted = highlightTerms.slice().sort(function(a, b) { return b.length - a.length; });
+            if (wholeSorted.length) {
+                var wholeEscaped = wholeSorted.map(function(t) { return escapeRe(t); });
+                var reWhole = new RegExp('\\b(' + wholeEscaped.join('|') + ')\\b', 'gi');
+                html = html.replace(reWhole, '<mark>$1</mark>');
+            }
+
+            // Partial/substring terms, longest first
+            var partialSorted = partialHighlightTerms.slice().sort(function(a, b) { return b.length - a.length; });
+            if (partialSorted.length) {
+                var partialEscaped = partialSorted.map(function(t) { return escapeRe(t); });
+                var rePartial = new RegExp('(' + partialEscaped.join('|') + ')', 'gi');
+                html = html.replace(rePartial, '<mark>$1</mark>');
+            }
+
             pre.innerHTML = html;
 
             marks = pre.querySelectorAll('mark');

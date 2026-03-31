@@ -105,13 +105,22 @@ def _make_result(row):
     }
 
 
-def _highlight_excerpt(excerpt, terms):
-    """Escape an excerpt and wrap matching terms in <mark> tags."""
+def _highlight_excerpt(excerpt, terms, partial_terms=None):
+    """Escape an excerpt and wrap matching terms in <mark> tags.
+
+    partial_terms: set of term strings that use substring (no word-boundary) matching.
+    All other terms are matched at word boundaries only.
+    """
     if not excerpt:
         return ''
     text = html_escape(excerpt.strip())
+    partial_terms = partial_terms or set()
     for term in terms:
-        pattern = re.compile(re.escape(html_escape(term)), re.IGNORECASE)
+        escaped = re.escape(html_escape(term))
+        if term.lower() in partial_terms:
+            pattern = re.compile(escaped, re.IGNORECASE)
+        else:
+            pattern = re.compile(r'\b' + escaped + r'\b', re.IGNORECASE)
         text = pattern.sub(lambda m: f'<mark>{m.group()}</mark>', text)
     return '...' + text + '...'
 
@@ -198,6 +207,14 @@ def _build_fts_query(raw):
             i += 1
             continue
 
+        # Partial/substring match: *word* — strip stars, treat as whole-word FTS5 term
+        if token.startswith('*') and token.endswith('*') and len(token) > 2:
+            word = token[1:-1]
+            if word.lower() not in STOPWORDS and len(word) > 1:
+                fts_parts.append(f'"{word}"')
+            i += 1
+            continue
+
         # Regular word — skip stopwords
         if token.lower() not in STOPWORDS and len(token) > 1:
             fts_parts.append(f'"{token}"')
@@ -273,7 +290,10 @@ def do_search(query):
         # Pass 2: extract snippet windows in SQL (avoids slow FTS5 snippet())
         if ranked_rows:
             # Extract search terms for snippet highlighting
-            terms = [w.strip('"').lower() for w in raw.split()
+            # Strip leading/trailing * from *word* partial-match tokens
+            partial_terms = {w[1:-1].lower() for w in raw.split()
+                             if w.startswith('*') and w.endswith('*') and len(w) > 2}
+            terms = [w.strip('"*').lower() for w in raw.split()
                      if w.upper() != 'OR' and not w.startswith('-')
                      and not re.match(r'NEAR/\d+', w, re.IGNORECASE)]
             # Use the full quoted phrase (if any) so the snippet is centered on
@@ -284,19 +304,35 @@ def do_search(query):
             ids = [row['id'] for row in ranked_rows]
             placeholders = ','.join('?' * len(ids))
             c.execute(f"""
-                SELECT rowid as id,
-                       substr(content,
-                              MAX(1, instr(LOWER(content), ?) - 80),
-                              200) as excerpt
+                SELECT rowid as id, content
                 FROM documents_fts
                 WHERE rowid IN ({placeholders})
-            """, [first_term] + ids)
-            excerpt_map = {row['id']: row['excerpt'] for row in c.fetchall()}
+            """, ids)
+
+            # Build a word-boundary regex for the first term so the excerpt is
+            # centered on an actual whole-word match, not a substring occurrence.
+            if first_term:
+                if first_term in partial_terms:
+                    _ft_re = re.compile(re.escape(first_term), re.IGNORECASE)
+                else:
+                    _ft_re = re.compile(r'\b' + re.escape(first_term) + r'\b', re.IGNORECASE)
+            else:
+                _ft_re = None
+
+            excerpt_map = {}
+            for row in c.fetchall():
+                content = row['content'] or ''
+                pos = 0
+                if _ft_re and content:
+                    m = _ft_re.search(content)
+                    if m:
+                        pos = m.start()
+                excerpt_map[row['id']] = content[max(0, pos - 80):pos + 200]
 
             for row in ranked_rows:
                 result = _make_result(row)
                 excerpt = excerpt_map.get(row['id'], '')
-                result['snippet'] = _highlight_excerpt(excerpt, terms)
+                result['snippet'] = _highlight_excerpt(excerpt, terms, partial_terms)
                 results.append(result)
     except sqlite3.OperationalError:
         pass
@@ -502,6 +538,7 @@ def text_view(doc_id):
     query = request.args.get('q', '').strip()
     # Extract highlight terms (strip operators, quotes, path/filename prefixes)
     highlight_terms = []
+    partial_highlight_terms = []
     if query:
         raw_q = re.sub(r'path:"[^"]+"|path:\S+', '', query)
         raw_q = re.sub(r'filename:\S+', '', raw_q)
@@ -511,11 +548,15 @@ def text_view(doc_id):
         for token in raw_q.split():
             if (token.upper() != 'OR' and not token.startswith('-')
                     and not re.match(r'NEAR/\d+', token, re.IGNORECASE)
-                    and len(token) > 1 and token.lower() not in STOPWORDS):
-                highlight_terms.append(token.rstrip('*'))
+                    and len(token) > 1):
+                if token.startswith('*') and token.endswith('*') and len(token) > 2:
+                    partial_highlight_terms.append(token[1:-1])
+                elif token.lower() not in STOPWORDS:
+                    highlight_terms.append(token.rstrip('*'))
     return render_template('text.html', filename=doc['filename'], doc_id=doc_id,
                            content=cleaned, site_title=config.SITE_TITLE,
-                           highlight_terms=highlight_terms)
+                           highlight_terms=highlight_terms,
+                           partial_highlight_terms=partial_highlight_terms)
 
 
 @app.route('/api/research')
@@ -536,7 +577,7 @@ def research_api():
 
     # Extract search terms for passage extraction
     words, _, _ = _parse_query(query)
-    terms = [w.strip('"').lower() for w in words
+    terms = [w.strip('"*').lower() for w in words
              if w.upper() != 'OR' and not w.startswith('-')
              and not re.match(r'NEAR/\\d+', w, re.IGNORECASE)]
 
@@ -554,13 +595,21 @@ def research_api():
         content_lower = content.lower()
 
         # Find all non-overlapping match positions
+        # Extract partial terms (*word*) for substring matching; others use word boundaries
+        words_raw, _, _ = _parse_query(query)
+        raw_for_partial = ' '.join(words_raw)
+        api_partial_terms = {w[1:-1].lower() for w in raw_for_partial.split()
+                             if w.startswith('*') and w.endswith('*') and len(w) > 2}
+
         all_ranges = []
         for term in terms:
-            start = 0
-            while True:
-                pos = content_lower.find(term.lower(), start)
-                if pos == -1:
-                    break
+            term_lower = term.lower()
+            if term_lower in api_partial_terms:
+                pattern = re.compile(re.escape(term_lower), re.IGNORECASE)
+            else:
+                pattern = re.compile(r'\b' + re.escape(term_lower) + r'\b', re.IGNORECASE)
+            for m in pattern.finditer(content_lower):
+                pos = m.start()
                 window_start = max(0, pos - 500)
                 window_end = min(len(content), pos + len(term) + 500)
                 overlaps = False
@@ -571,7 +620,6 @@ def research_api():
                         break
                 if not overlaps:
                     all_ranges.append((window_start, window_end))
-                start = pos + len(term)
 
         total_passages = len(all_ranges)
         # Extract only the requested slice
