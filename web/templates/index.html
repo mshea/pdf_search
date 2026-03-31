@@ -402,6 +402,7 @@
 
         // --- Folder filter ---
         let allFolders = [];
+        let _folderLoadSeq = 0;
 
         function filterFolders() {
             var query = document.getElementById('folder-filter').value.toLowerCase();
@@ -569,14 +570,17 @@
         }
 
         function loadFolders(path) {
+            const seq = ++_folderLoadSeq;
             currentPath = path;
             updatePageBreadcrumbs(path);
             document.getElementById('folder-filter').value = '';
+            document.getElementById('folders-list').innerHTML = '<div style="color: #aaa;">Loading...</div>';
             const url = path ? '/folders?path=' + encodeURIComponent(path) : '/folders';
 
             fetch(url)
                 .then(r => r.json())
                 .then(data => {
+                    if (seq !== _folderLoadSeq) return;
                     allFolders = data.folders;
                     if (data.folders.length === 0) {
                         document.getElementById('folders-list').innerHTML = '<div style="color: #aaa;">No subfolders</div>';
@@ -585,6 +589,7 @@
                     }
                 })
                 .catch(function() {
+                    if (seq !== _folderLoadSeq) return;
                     document.getElementById('folders-list').innerHTML = '<div style="color: #f44;">Error loading folders</div>';
                 });
         }

@@ -14,7 +14,7 @@ import threading
 import time
 
 from collections import Counter
-from flask import Flask, render_template, request, send_file, jsonify, abort
+from flask import Flask, render_template, request, send_file, jsonify, abort, Response
 
 # Allow imports from the project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -535,6 +535,10 @@ def text_view(doc_id):
     if not fts_row or not fts_row['content']:
         abort(404)
     cleaned = clean_text(fts_row['content'])
+    content_html = ''.join(
+        '<p>' + html_escape(para).replace('\n', '<br>') + '</p>'
+        for para in cleaned.split('\n\n') if para.strip()
+    )
     query = request.args.get('q', '').strip()
     # Extract highlight terms (strip operators, quotes, path/filename prefixes)
     highlight_terms = []
@@ -554,9 +558,32 @@ def text_view(doc_id):
                 elif token.lower() not in STOPWORDS:
                     highlight_terms.append(token.rstrip('*'))
     return render_template('text.html', filename=doc['filename'], doc_id=doc_id,
-                           content=cleaned, site_title=config.SITE_TITLE,
+                           content_html=content_html, site_title=config.SITE_TITLE,
                            highlight_terms=highlight_terms,
                            partial_highlight_terms=partial_highlight_terms)
+
+
+@app.route('/text/<int:doc_id>/download')
+def text_download(doc_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT filename FROM documents WHERE id = ?", (doc_id,))
+    doc = c.fetchone()
+    if not doc:
+        conn.close()
+        abort(404)
+    c.execute("SELECT content FROM documents_fts WHERE rowid = ?", (doc_id,))
+    fts_row = c.fetchone()
+    conn.close()
+    if not fts_row or not fts_row['content']:
+        abort(404)
+    cleaned = clean_text(fts_row['content'])
+    download_name = re.sub(r'\.pdf$', '', doc['filename'], flags=re.IGNORECASE) + '.txt'
+    return Response(
+        cleaned,
+        mimetype='text/plain',
+        headers={'Content-Disposition': f'attachment; filename="{download_name}"'}
+    )
 
 
 @app.route('/api/research')
