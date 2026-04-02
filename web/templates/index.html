@@ -557,7 +557,7 @@
                     + '<div class="result-meta">' + escapeHtml(folder) + ' &middot; ' + escapeHtml(r.size);
                 if (datePart) html += ' &middot; ' + escapeHtml(datePart);
                 html += '</div>';
-                if (r.snippet) html += '<div class="result-snippet">' + escapeHtml(r.snippet).replace(/&lt;mark&gt;/g, '<mark>').replace(/&lt;\/mark&gt;/g, '</mark>') + '</div>';
+                if (r.snippet) html += '<div class="result-snippet">' + r.snippet + '</div>';
                 html += '</div>';
                 return html;
             }).join('');

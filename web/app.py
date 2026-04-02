@@ -4,7 +4,7 @@ PDF Search web interface.
 Flask app with full-text search, folder browsing, and PDF serving.
 """
 
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
 import logging
 import os
 import re
@@ -321,7 +321,7 @@ def do_search(query):
 
             excerpt_map = {}
             for row in c.fetchall():
-                content = row['content'] or ''
+                content = html_unescape((row['content'] or '').replace('\ufffd', '').replace('\f', ''))
                 pos = 0
                 if _ft_re and content:
                     m = _ft_re.search(content)
@@ -371,8 +371,8 @@ def clean_text(raw):
                 ))
             raw = '\n'.join(cleaned_pages)
 
-    # Strip form-feed characters
-    raw = raw.replace('\f', '')
+    # Strip form-feed and Unicode replacement characters
+    raw = raw.replace('\f', '').replace('\ufffd', '')
 
     # Fix hyphenated line breaks: word-\n -> word
     raw = re.sub(r'(\w)-\n(\w)', r'\1\2', raw)
