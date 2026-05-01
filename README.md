@@ -26,7 +26,16 @@ Full-text search over a local PDF library with a web interface. Uses SQLite FTS5
 - Flask (`pip install flask`)
 - `pdftotext` (from `poppler-utils`)
 
-Install on Debian/Ubuntu:
+Install on Debian/Ubuntu (24.04 LTS+):
+
+```bash
+sudo apt install poppler-utils python3-venv
+python3 -m venv venv
+source venv/bin/activate
+pip install flask
+```
+
+Install on Debian/Ubuntu (pre-24.04):
 
 ```bash
 sudo apt install poppler-utils
@@ -37,6 +46,8 @@ Install on macOS:
 
 ```bash
 brew install poppler
+python3 -m venv venv
+source venv/bin/activate
 pip install flask
 ```
 
@@ -49,7 +60,13 @@ pip install flask
 cp config.py.sample config.py
 ```
 
-3. Start the web server:
+3. Activate the virtual environment (if you created one):
+
+```bash
+source venv/bin/activate
+```
+
+4. Start the web server:
 
 ```bash
 cd web
